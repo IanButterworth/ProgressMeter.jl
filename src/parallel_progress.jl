@@ -29,24 +29,26 @@ const PP_CANCEL = -3
 next!(pp::ParallelProgress) = put!(pp.channel, PP_NEXT)
 finish!(pp::ParallelProgress) = put!(pp.channel, PP_FINISH)
 cancel(pp::ParallelProgress, args...; kw...) = put!(pp.channel, PP_CANCEL)
-update!(pp::ParallelProgress, counter, color = nothing) = put!(pp.channel, counter)
+function update!(pp::ParallelProgress, counter, color = fetch!(pp.channel)[:color]; desc = fetch!(pp.channel)[:desc],  offset = fetch!(pp.channel)[:offset])
+    put!(pp.channel, Dict(:counter => counter, :color => color, :desc => desc, :offset => offset))
+end
 
 function ParallelProgress(n::Int; kw...)
-    channel = RemoteChannel(() -> Channel{Int}(n))
+    channel = RemoteChannel(() -> Channel{Dict{Symbol,Any}}(n))
     progress = Progress(n; kw...)
     
     @async while progress.counter < progress.n
         f = take!(channel)
-        if f == PP_NEXT
+        if f[:counter] == PP_NEXT
             next!(progress)
-        elseif f == PP_FINISH
+        elseif f[:counter] == PP_FINISH
             finish!(progress)
             break
-        elseif f == PP_CANCEL
+        elseif f[:counter] == PP_CANCEL
             cancel(progress)
             break
-        elseif f >= 0
-            update!(progress, f)
+        elseif f[:counter] >= 0
+            update!(progress, f[:counter], f[:color], offset=f[:offset], desc=f[:desc])
         end
     end
     return ParallelProgress(channel, n)
