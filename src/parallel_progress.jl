@@ -17,8 +17,11 @@ julia> pmap(1:10) do
        end
 ```
 """
-struct ParallelProgress{C}
-    channel::C
+struct ParallelProgress{C1,C2,C3,C4}
+    counter_chan::C1
+    color_chan::C2
+    offset_chan::C3
+    desc_chan::C4
     n::Int
 end
 
@@ -26,17 +29,26 @@ const PP_NEXT = -1
 const PP_FINISH = -2
 const PP_CANCEL = -3
 
-next!(pp::ParallelProgress) = put!(pp.channel, PP_NEXT)
-finish!(pp::ParallelProgress) = put!(pp.channel, PP_FINISH)
-cancel(pp::ParallelProgress, args...; kw...) = put!(pp.channel, PP_CANCEL)
-update!(pp::ParallelProgress, counter, color = nothing) = put!(pp.channel, counter)
+next!(pp::ParallelProgress) = put!(pp.counter_chan, PP_NEXT)
+finish!(pp::ParallelProgress) = put!(pp.counter_chan, PP_FINISH)
+cancel(pp::ParallelProgress, args...; kw...) = put!(pp.counter_chan, PP_CANCEL)
+function update!(pp::ParallelProgress, counter=take!(pp.counter_chan), color=take!(pp.color_chan); 
+            offset=take!(pp.offset_chan), desc=take!(desc_chan))
+    put!(pp.counter_chan, counter)
+    put!(pp.color_chan, color)
+    put!(pp.offset_chan, offset)
+    put!(pp.desc_chan, desc)
+end
 
 function ParallelProgress(n::Int; kw...)
-    channel = RemoteChannel(() -> Channel{Int}(n))
+    counter_chan = RemoteChannel(() -> Channel{Int}(n))
+    color_chan = RemoteChannel(() -> Channel{Symbol}(n))
+    offset_chan = RemoteChannel(() -> Channel{Int}(n))
+    desc_chan = RemoteChannel(() -> Channel{String}(n))
     progress = Progress(n; kw...)
     
     @async while progress.counter < progress.n
-        f = take!(channel)
+        f = take!(counter_chan)
         if f == PP_NEXT
             next!(progress)
         elseif f == PP_FINISH
@@ -49,24 +61,33 @@ function ParallelProgress(n::Int; kw...)
             update!(progress, f)
         end
     end
-    return ParallelProgress(channel, n)
+    @async while progress.counter < progress.n
+        update!(progress, color=take!(color_chan))
+    end
+    @async while progress.counter < progress.n
+        update!(progress, offset_chan=take!(offset_chan))
+    end
+    @async while progress.counter < progress.n
+        update!(progress, desc_chan=take!(desc_chan))
+    end
+    return ParallelProgress(counter_chan, color_chan, offset_chan, desc_chan, n)
 end
 
 struct MultipleChannel{C}
-    channel::C
+    counter_chan::C
     id
 end
-Distributed.put!(mc::MultipleChannel, x) = put!(mc.channel, (mc.id, x))
+Distributed.put!(mc::MultipleChannel, x) = put!(mc.counter_chan, (mc.id, x))
 
 
 struct MultipleProgress{C}
-    channel::C
+    counter_chan::C
     amount::Int
     lengths::Vector{Int}
 end
 
-Base.getindex(mp::MultipleProgress, n::Integer) = ParallelProgress(MultipleChannel(mp.channel, n), mp.lengths[n])
-finish!(mp::MultipleProgress) = put!.([mp.channel], [(p, PP_FINISH) for p in 1:mp.amount])
+Base.getindex(mp::MultipleProgress, n::Integer) = ParallelProgress(MultipleChannel(mp.counter_chan, n), mp.lengths[n])
+finish!(mp::MultipleProgress) = put!.([mp.counter_chan], [(p, PP_FINISH) for p in 1:mp.amount])
 
 
 """
@@ -115,7 +136,7 @@ function MultipleProgress(lengths::AbstractVector{<:Integer};
     main_progress = Progress(total_length; offset=0, kw...)
     progresses = Union{Progress,Nothing}[nothing for _ in 1:amount]
     taken_offsets = Set(Int[])
-    channel = RemoteChannel(() -> Channel{Tuple{Int,Int}}(max(2amount, 64)))
+    counter_chan = RemoteChannel(() -> Channel{Tuple{Int,Int}}(max(2amount, 64)))
 
     max_offsets = 1
 
@@ -124,7 +145,7 @@ function MultipleProgress(lengths::AbstractVector{<:Integer};
     @async begin
         while true
             
-            (p, value) = take!(channel)
+            (p, value) = take!(counter_chan)
 
             # first time calling progress p
             if isnothing(progresses[p])
@@ -166,7 +187,7 @@ function MultipleProgress(lengths::AbstractVector{<:Integer};
         print("\n" ^ max_offsets)
     end
 
-    return MultipleProgress(channel, amount, collect(lengths))
+    return MultipleProgress(counter_chan, amount, collect(lengths))
 end
 
 
