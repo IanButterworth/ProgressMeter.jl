@@ -82,11 +82,14 @@ Distributed.put!(mc::MultipleChannel, x) = put!(mc.counter_chan, (mc.id, x))
 
 struct MultipleProgress{C}
     counter_chan::C
+    color_chan::RemoteChannel{Channel{Symbol}}
+    offset_chan::RemoteChannel{Channel{Int}}
+    desc_chan::RemoteChannel{Channel{String}}
     amount::Int
     lengths::Vector{Int}
 end
 
-Base.getindex(mp::MultipleProgress, n::Integer) = ParallelProgress(MultipleChannel(mp.counter_chan, n), mp.lengths[n])
+Base.getindex(mp::MultipleProgress, n::Integer) = ParallelProgress(MultipleChannel(mp.counter_chan, mp.color_chan, mp.offset_chan, mp.desc_chan, n), mp.lengths[n])
 finish!(mp::MultipleProgress) = put!.([mp.counter_chan], [(p, PP_FINISH) for p in 1:mp.amount])
 
 
