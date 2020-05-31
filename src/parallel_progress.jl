@@ -17,11 +17,11 @@ julia> pmap(1:10) do
        end
 ```
 """
-struct ParallelProgress{C1,C2,C3,C4}
-    counter_chan::C1
-    color_chan::C2
-    offset_chan::C3
-    desc_chan::C4
+struct ParallelProgress{C}
+    counter_chan::C
+    color_chan::RemoteChannel{Channel{Symbol}}
+    offset_chan::RemoteChannel{Channel{Int}}
+    desc_chan::RemoteChannel{Channel{String}}
     n::Int
 end
 
